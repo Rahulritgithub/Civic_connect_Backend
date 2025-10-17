@@ -3,6 +3,9 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 from django.core.validators import RegexValidator
 
+
+################################################ User Model ###################################################################################
+
 class CustomUserManager(BaseUserManager):
     def create_user(self, email, name, phone_number, password=None, **extra_fields):
         if not email:
@@ -53,6 +56,8 @@ class User(AbstractBaseUser):
         return self.is_superuser
 
 
+################################################ Post Model ###################################################################################
+
 class Post(models.Model):
     URGENCY_CHOICES = [
         ('low', 'Low'),
@@ -91,3 +96,51 @@ class Post(models.Model):
     
     def __str__(self):
         return f"Post {self.id} - {self.location}"
+    
+
+
+    @property
+    def votes_count(self):
+        """Calculate votes from Vote table"""
+        return self.post_votes.count()
+    
+    def user_has_voted(self, user):
+        """Check if user has voted for this post"""
+        if not user.is_authenticated:
+            return False
+        return self.post_votes.filter(user=user).exists()
+    
+    def toggle_vote(self, user):
+        """Toggle vote - add if not exists, remove if exists"""
+        if not user.is_authenticated:
+            return False, self.votes_count
+        
+        vote_exists = self.post_votes.filter(user=user).exists()
+        
+        if vote_exists:
+            # Remove vote
+            self.post_votes.filter(user=user).delete()
+            self.votes = models.F('votes') - 1
+            voted = False
+        else:
+            # Add vote
+            Vote.objects.create(user=user, post=self)
+            self.votes = models.F('votes') + 1
+            voted = True
+        
+        self.save()
+        self.refresh_from_db()
+        return True, self.votes
+    
+
+
+################################################ Votes Model ######################################################################################
+
+
+class Vote(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='post_votes')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['user', 'post']  # This prevents duplicate votes 

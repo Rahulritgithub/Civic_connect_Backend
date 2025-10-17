@@ -1,12 +1,16 @@
+import json
+from django.http import JsonResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.authtoken.models import Token  
-from django.contrib.auth import login, logout
 from connect.models import Post
 from connect.serializers import UserRegistrationSerializer, UserLoginSerializer, PostQuerySerializer
 from rest_framework.permissions import IsAuthenticated 
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import csrf_exempt
 
 
 
@@ -103,6 +107,127 @@ def post_query(request):
                 'success': False,
                 'errors': serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
+        
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def view_all_posts(request):
+    """
+    Get all posts from all users
+    """
+    try:
+        # Get all posts ordered by most recent first
+        posts = Post.objects.all().order_by('-created_at')
+        
+        # Serialize the data
+        serializer = PostQuerySerializer(posts, many=True)
+        
+        return Response({
+            'success': True,
+            'message': 'All posts retrieved successfully',
+            'posts': serializer.data,
+            'total_count': posts.count()
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error retrieving all posts: {str(e)}")
+        return Response({
+            'success': False,
+            'error': f'Failed to retrieve posts: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+@require_http_methods(["POST"])
+@permission_classes([IsAuthenticated])
+def toggle_vote(request, post_id):
+    """API endpoint to toggle vote"""
+    try:
+        post = Post.objects.get(id=post_id)
+        success, vote_count = post.toggle_vote(request.user)
+        user_has_voted = post.user_has_voted(request.user)
+        
+        return JsonResponse({
+            'success': success,
+            'vote_count': vote_count,
+            'user_has_voted': user_has_voted,
+            'post_id': post_id
+        })
+        
+    except Post.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Post not found'
+        }, status=404)
+    
+@csrf_exempt
+@require_http_methods(["POST"])
+@permission_classes([AllowAny])  # Allow unauthenticated access
+def public_toggle_vote(request, post_id):
+    """Public vote endpoint for testing - no authentication required"""
+    try:
+        post = Post.objects.get(id=post_id)
+        
+        # For testing, simulate a vote without requiring a user
+        # You can modify this logic based on your needs
+        data = json.loads(request.body)
+        vote_action = data.get('vote', True)
+        
+        if vote_action:
+            post.votes += 1
+        else:
+            post.votes = max(0, post.votes - 1)
+        
+        post.save()
+        
+        return JsonResponse({
+            'success': True,
+            'vote_count': post.votes,
+            'user_has_voted': vote_action,
+            'post_id': post_id,
+            'message': 'Vote recorded successfully'
+        })
+        
+    except Post.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Post not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)
+    
+
+@require_http_methods(["GET"])
+@permission_classes([AllowAny])
+def vote_status(request, post_id):
+    """Get current vote status (public endpoint)"""
+    try:
+        post = Post.objects.get(id=post_id)
+        vote_count = post.votes_count
+        
+        # Check if current user has voted
+        user_has_voted = False
+        if request.user.is_authenticated:
+            user_has_voted = post.user_has_voted(request.user)
+        
+        return JsonResponse({
+            'success': True,
+            'vote_count': vote_count,
+            'user_has_voted': user_has_voted,
+            'is_authenticated': request.user.is_authenticated,
+            'post_id': post_id
+        })
+        
+    except Post.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Post not found'
+        }, status=404)
 
 
 
